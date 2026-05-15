@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS: TemplateSettings = {
   uniformScale: 1,
   autoCenter: true,
   groundAlign: true,
+  showBounds: false,
   showTransformGizmo: false,
   transformMode: "translate",
   fitOnLoad: true,

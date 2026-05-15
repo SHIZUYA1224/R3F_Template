@@ -8,6 +8,17 @@ export type AnimationLoopMode = "repeat" | "once";
 
 export type ToneMappingMode = "none" | "linear" | "aces";
 
+export type ModelStatus = "loading" | "ready" | "error";
+
+export type CameraView =
+  | "isometric"
+  | "front"
+  | "back"
+  | "left"
+  | "right"
+  | "top"
+  | "bottom";
+
 export type EnvironmentPreset =
   | "apartment"
   | "city"
@@ -35,6 +46,7 @@ export interface TemplateSettings {
   uniformScale: number;
   autoCenter: boolean;
   groundAlign: boolean;
+  showBounds: boolean;
   showTransformGizmo: boolean;
   transformMode: TransformMode;
   fitOnLoad: boolean;
@@ -81,4 +93,21 @@ export interface TemplateSettings {
   animationSpeed: number;
   animationLoop: AnimationLoopMode;
   showStats: boolean;
+}
+
+export interface ModelReport {
+  source: string;
+  meshes: number;
+  materials: number;
+  vertices: number;
+  triangles: number;
+  animations: number;
+  dimensions: Vec3;
+  center: Vec3;
+  radius: number;
+}
+
+export interface CameraViewCommand {
+  preset: CameraView;
+  sequence: number;
 }

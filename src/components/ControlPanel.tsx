@@ -4,25 +4,36 @@ import {
   Check,
   CirclePlay,
   Clipboard,
+  Download,
   Eye,
+  FileJson,
   Grid3X3,
+  Info,
   Lightbulb,
   Move3D,
+  RefreshCw,
   RotateCcw,
   SlidersHorizontal,
   Upload,
 } from "lucide-react";
 import { ENVIRONMENT_OPTIONS, MODEL_PATH_PRESETS } from "../defaults";
-import type { TemplateSettings, Vec3, VectorSettingKey } from "../types";
+import { settingsForStorage } from "../settingsStorage";
+import type { CameraView, ModelReport, ModelStatus, TemplateSettings, Vec3, VectorSettingKey } from "../types";
 
 interface ControlPanelProps {
   settings: TemplateSettings;
   animations: string[];
   modelLabel: string;
+  modelReport: ModelReport | null;
+  modelStatus: ModelStatus;
+  modelError: string | null;
   onPatchSettings: (patch: Partial<TemplateSettings>) => void;
   onVectorChange: (key: VectorSettingKey, index: number, value: number) => void;
   onFileSelect: (file: File) => void;
   onLoadPath: (path: string) => void;
+  onReloadModel: () => void;
+  onImportSettings: (file: File) => void;
+  onViewPreset: (preset: CameraView) => void;
   onFit: () => void;
   onResetTransform: () => void;
   onResetAll: () => void;
@@ -34,15 +45,22 @@ export function ControlPanel({
   settings,
   animations,
   modelLabel,
+  modelReport,
+  modelStatus,
+  modelError,
   onPatchSettings,
   onVectorChange,
   onFileSelect,
   onLoadPath,
+  onReloadModel,
+  onImportSettings,
+  onViewPreset,
   onFit,
   onResetTransform,
   onResetAll,
 }: ControlPanelProps) {
   const transformSnippet = buildTransformSnippet(settings);
+  const presetJson = buildPresetJson(settings);
 
   return (
     <aside className="control-panel" aria-label="GLB controls">
@@ -93,6 +111,20 @@ export function ControlPanel({
           checked={settings.useDraco}
           onChange={(useDraco) => onPatchSettings({ useDraco })}
         />
+        <div className="button-row">
+          <button type="button" onClick={onReloadModel}>
+            <RefreshCw size={16} aria-hidden="true" />
+            Reload
+          </button>
+          <button type="button" onClick={onFit}>
+            <Camera size={16} aria-hidden="true" />
+            Fit
+          </button>
+        </div>
+      </PanelSection>
+
+      <PanelSection title="Info" icon={<Info size={17} aria-hidden="true" />} defaultOpen>
+        <ModelInfo report={modelReport} status={modelStatus} error={modelError} />
       </PanelSection>
 
       <PanelSection title="Transform" icon={<Move3D size={17} aria-hidden="true" />} defaultOpen>
@@ -117,6 +149,11 @@ export function ControlPanel({
             label="Ground align"
             checked={settings.groundAlign}
             onChange={(groundAlign) => onPatchSettings({ groundAlign })}
+          />
+          <Toggle
+            label="Bounds"
+            checked={settings.showBounds}
+            onChange={(showBounds) => onPatchSettings({ showBounds })}
           />
         </div>
         <div className="button-row">
@@ -147,6 +184,21 @@ export function ControlPanel({
       </PanelSection>
 
       <PanelSection title="Camera" icon={<Camera size={17} aria-hidden="true" />}>
+        <div className="view-preset-row">
+          {[
+            ["isometric", "Iso"],
+            ["front", "Front"],
+            ["right", "Right"],
+            ["left", "Left"],
+            ["back", "Back"],
+            ["top", "Top"],
+            ["bottom", "Bottom"],
+          ].map(([preset, label]) => (
+            <button key={preset} type="button" onClick={() => onViewPreset(preset as CameraView)}>
+              {label}
+            </button>
+          ))}
+        </div>
         <Segmented
           label="Projection"
           value={settings.cameraMode}
@@ -185,6 +237,19 @@ export function ControlPanel({
           max={160}
           step={1}
           onChange={(maxDistance) => onPatchSettings({ maxDistance })}
+        />
+        <Toggle
+          label="Fit on load"
+          checked={settings.fitOnLoad}
+          onChange={(fitOnLoad) => onPatchSettings({ fitOnLoad })}
+        />
+        <RangeField
+          label="Fit margin"
+          value={settings.fitMargin}
+          min={0.8}
+          max={4}
+          step={0.05}
+          onChange={(fitMargin) => onPatchSettings({ fitMargin })}
         />
       </PanelSection>
 
@@ -330,17 +395,94 @@ export function ControlPanel({
         <div className="snippet-box">
           <code>{transformSnippet}</code>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            void navigator.clipboard?.writeText(transformSnippet);
-          }}
-        >
-          <Clipboard size={16} aria-hidden="true" />
-          Copy JSX
-        </button>
+        <div className="button-row">
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(transformSnippet);
+            }}
+          >
+            <Clipboard size={16} aria-hidden="true" />
+            JSX
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(presetJson);
+            }}
+          >
+            <FileJson size={16} aria-hidden="true" />
+            JSON
+          </button>
+          <button type="button" onClick={() => downloadPreset(presetJson)}>
+            <Download size={16} aria-hidden="true" />
+            Preset
+          </button>
+          <label className="file-button">
+            <Upload size={16} aria-hidden="true" />
+            Preset
+            <input
+              type="file"
+              accept="application/json,.json"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                if (file) {
+                  onImportSettings(file);
+                }
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
+        </div>
       </PanelSection>
     </aside>
+  );
+}
+
+function ModelInfo({
+  report,
+  status,
+  error,
+}: {
+  report: ModelReport | null;
+  status: ModelStatus;
+  error: string | null;
+}) {
+  if (status === "error") {
+    return <div className="status-box is-error">{error || "Could not load the selected GLB."}</div>;
+  }
+
+  if (status === "loading") {
+    return <div className="status-box">Loading model</div>;
+  }
+
+  if (!report) {
+    return <div className="status-box">Ready</div>;
+  }
+
+  const dimensions = report.dimensions.map((value) => formatNumber(value)).join(" x ");
+  const center = report.center.map((value) => formatNumber(value)).join(", ");
+
+  return (
+    <div className="info-grid">
+      <InfoItem label="Meshes" value={String(report.meshes)} />
+      <InfoItem label="Materials" value={String(report.materials)} />
+      <InfoItem label="Vertices" value={String(report.vertices)} />
+      <InfoItem label="Triangles" value={String(report.triangles)} />
+      <InfoItem label="Animations" value={String(report.animations)} />
+      <InfoItem label="Radius" value={formatNumber(report.radius)} />
+      <InfoItem label="Size" value={dimensions} wide />
+      <InfoItem label="Center" value={center} wide />
+    </div>
+  );
+}
+
+function InfoItem({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <div className={wide ? "info-item is-wide" : "info-item"}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 
@@ -507,6 +649,7 @@ function TextField({
     <label className="text-field">
       <span>{label}</span>
       <input
+        key={value}
         type="text"
         defaultValue={value}
         placeholder={placeholder}
@@ -590,4 +733,24 @@ function buildTransformSnippet(settings: TemplateSettings) {
   const rotation = settings.rotation.map((value) => formatNumber((value * Math.PI) / 180)).join(", ");
   const scale = settings.scale.map((value) => formatNumber(value * settings.uniformScale)).join(", ");
   return `<primitive object={gltf.scene} position={[${position}]} rotation={[${rotation}]} scale={[${scale}]} />`;
+}
+
+function buildPresetJson(settings: TemplateSettings) {
+  return JSON.stringify(
+    {
+      settings: settingsForStorage(settings),
+      exportedAt: new Date().toISOString(),
+    },
+    null,
+    2,
+  );
+}
+
+function downloadPreset(json: string) {
+  const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "r3f-glb-preset.json";
+  anchor.click();
+  URL.revokeObjectURL(url);
 }

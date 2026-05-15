@@ -80,6 +80,21 @@ summary:focus-visible {
   min-height: 0;
 }
 
+.drop-overlay {
+  position: absolute;
+  inset: 1rem;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(143, 208, 108, 0.85);
+  border-radius: 8px;
+  color: #dff4d2;
+  background: rgba(15, 22, 16, 0.68);
+  font-size: 1rem;
+  font-weight: 800;
+  pointer-events: none;
+}
+
 .viewport-bar {
   position: absolute;
   left: 1rem;
@@ -109,6 +124,18 @@ summary:focus-visible {
   margin-top: 0.12rem;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.viewport-bar .model-status {
+  color: #c6d2df;
+}
+
+.viewport-bar .model-status.is-ready {
+  color: #bfe7ad;
+}
+
+.viewport-bar .model-status.is-error {
+  color: #ffbe7d;
 }
 
 .viewport-actions,
@@ -232,6 +259,20 @@ summary:focus-visible {
 .preset-row button {
   min-height: 1.9rem;
   padding: 0.35rem 0.55rem;
+  color: #d7dee8;
+  font-size: 0.78rem;
+}
+
+.view-preset-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.42rem;
+}
+
+.view-preset-row button {
+  min-width: 0;
+  min-height: 1.95rem;
+  padding: 0.35rem 0.45rem;
   color: #d7dee8;
   font-size: 0.78rem;
 }
@@ -384,6 +425,52 @@ summary:focus-visible {
   font-size: 0.77rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.info-item,
+.status-box {
+  min-width: 0;
+  border: 1px solid #303840;
+  border-radius: 7px;
+  padding: 0.62rem;
+  background: #11161b;
+}
+
+.info-item.is-wide {
+  grid-column: 1 / -1;
+}
+
+.info-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.info-item strong {
+  display: block;
+  margin-top: 0.18rem;
+  overflow: hidden;
+  color: #edf1f7;
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-box {
+  color: #c6d2df;
+  font-size: 0.88rem;
+}
+
+.status-box.is-error {
+  border-color: rgba(255, 159, 67, 0.45);
+  color: #ffbe7d;
 }
 
 .scene-label {

@@ -11,11 +11,12 @@ import {
   useBounds,
   useGLTF,
 } from "@react-three/drei";
-import { Canvas, useThree } from "@react-three/fiber";
-import { Component, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Component, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
   Box3,
+  BoxHelper,
   Color,
   DoubleSide,
   FrontSide,
@@ -33,12 +34,18 @@ import {
   Vector3,
 } from "three";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import type { TemplateSettings, Vec3 } from "../types";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import type { CameraView, CameraViewCommand, ModelReport, TemplateSettings, Vec3 } from "../types";
 
 interface SceneCanvasProps {
   settings: TemplateSettings;
+  modelRevision: number;
+  modelReport: ModelReport | null;
+  viewCommand: CameraViewCommand;
   fitSignal: number;
   onAnimationsChange: (names: string[]) => void;
+  onModelReport: (report: ModelReport) => void;
+  onModelError: (message: string) => void;
   onTransformCommit: (transform: Pick<TemplateSettings, "position" | "rotation" | "scale">) => void;
 }
 
@@ -59,12 +66,27 @@ interface StoredMaterialProps {
 
 interface LoadedModelProps {
   settings: TemplateSettings;
+  sourceUrl: string;
+  sourceLabel: string;
   onAnimationsChange: (names: string[]) => void;
+  onModelReport: (report: ModelReport) => void;
   onTransformCommit: (transform: Pick<TemplateSettings, "position" | "rotation" | "scale">) => void;
 }
 
-export function SceneCanvas({ settings, fitSignal, onAnimationsChange, onTransformCommit }: SceneCanvasProps) {
+export function SceneCanvas({
+  settings,
+  modelRevision,
+  modelReport,
+  viewCommand,
+  fitSignal,
+  onAnimationsChange,
+  onModelReport,
+  onModelError,
+  onTransformCommit,
+}: SceneCanvasProps) {
   const cameraPosition: Vec3 = [4, 3, 6];
+  const sourceUrl = useMemo(() => withRevision(settings.modelUrl, modelRevision), [modelRevision, settings.modelUrl]);
+  const controlsRef = useRef<OrbitControlsImpl | null>(null);
 
   return (
     <Canvas
@@ -106,11 +128,18 @@ export function SceneCanvas({ settings, fitSignal, onAnimationsChange, onTransfo
       ) : null}
 
       <Suspense fallback={<LoadingModel />}>
-        <ModelLoadBoundary source={settings.modelUrl} onAnimationsChange={onAnimationsChange}>
+        <ModelLoadBoundary
+          source={sourceUrl}
+          onAnimationsChange={onAnimationsChange}
+          onModelError={onModelError}
+        >
           <Bounds fit={settings.fitOnLoad} observe clip margin={settings.fitMargin}>
             <LoadedModel
               settings={settings}
+              sourceUrl={sourceUrl}
+              sourceLabel={settings.modelUrl}
               onAnimationsChange={onAnimationsChange}
+              onModelReport={onModelReport}
               onTransformCommit={onTransformCommit}
             />
             <FitController signal={fitSignal} />
@@ -121,7 +150,15 @@ export function SceneCanvas({ settings, fitSignal, onAnimationsChange, onTransfo
       {settings.showFloor ? <GroundPlane settings={settings} /> : null}
       {settings.showGrid ? <SceneGrid settings={settings} /> : null}
       {settings.showAxes ? <axesHelper args={[settings.axesSize]} /> : null}
+      <CameraViewController
+        command={viewCommand}
+        controlsRef={controlsRef}
+        radius={modelReport?.radius ?? 2}
+        position={settings.position}
+        fitMargin={settings.fitMargin}
+      />
       <OrbitControls
+        ref={controlsRef}
         makeDefault
         enableDamping
         dampingFactor={0.08}
@@ -138,36 +175,49 @@ export function SceneCanvas({ settings, fitSignal, onAnimationsChange, onTransfo
 }
 
 class ModelLoadBoundary extends Component<
-  { children: React.ReactNode; source: string; onAnimationsChange: (names: string[]) => void },
-  { hasError: boolean }
+  {
+    children: React.ReactNode;
+    source: string;
+    onAnimationsChange: (names: string[]) => void;
+    onModelError: (message: string) => void;
+  },
+  { hasError: boolean; message: string }
 > {
-  state = { hasError: false };
+  state = { hasError: false, message: "" };
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error.message };
   }
 
-  componentDidCatch() {
+  componentDidCatch(error: Error) {
     this.props.onAnimationsChange([]);
+    this.props.onModelError(error.message);
   }
 
   componentDidUpdate(previousProps: { source: string }) {
     if (previousProps.source !== this.props.source && this.state.hasError) {
-      this.setState({ hasError: false });
+      this.setState({ hasError: false, message: "" });
     }
   }
 
   render() {
     if (this.state.hasError) {
-      return <MissingModel />;
+      return <MissingModel message={this.state.message} />;
     }
 
     return this.props.children;
   }
 }
 
-function LoadedModel({ settings, onAnimationsChange, onTransformCommit }: LoadedModelProps) {
-  const gltf = useGLTF(settings.modelUrl, settings.useDraco);
+function LoadedModel({
+  settings,
+  sourceUrl,
+  sourceLabel,
+  onAnimationsChange,
+  onModelReport,
+  onTransformCommit,
+}: LoadedModelProps) {
+  const gltf = useGLTF(sourceUrl, settings.useDraco);
   const [target, setTarget] = useState<Group | null>(null);
   const setTargetRef = useCallback((node: Group | null) => setTarget(node), []);
 
@@ -193,6 +243,10 @@ function LoadedModel({ settings, onAnimationsChange, onTransformCommit }: Loaded
   useEffect(() => {
     onAnimationsChange(gltf.animations.map((clip) => clip.name).filter(Boolean));
   }, [gltf.animations, onAnimationsChange]);
+
+  useEffect(() => {
+    onModelReport(buildModelReport(scene, gltf.animations.length, sourceLabel));
+  }, [gltf.animations.length, onModelReport, scene, sourceLabel]);
 
   useEffect(() => {
     scene.traverse((object) => {
@@ -268,6 +322,7 @@ function LoadedModel({ settings, onAnimationsChange, onTransformCommit }: Loaded
           onMouseUp={() => onTransformCommit(readTransform(target))}
         />
       ) : null}
+      {settings.showBounds && target ? <BoundsHelper target={target} /> : null}
     </>
   );
 }
@@ -316,6 +371,58 @@ function FitController({ signal }: { signal: number }) {
   }, [bounds, signal]);
 
   return null;
+}
+
+function CameraViewController({
+  command,
+  controlsRef,
+  radius,
+  position,
+  fitMargin,
+}: {
+  command: CameraViewCommand;
+  controlsRef: React.RefObject<OrbitControlsImpl | null>;
+  radius: number;
+  position: Vec3;
+  fitMargin: number;
+}) {
+  const { camera } = useThree();
+
+  useEffect(() => {
+    if (command.sequence === 0) {
+      return;
+    }
+
+    const target = new Vector3(position[0], position[1] + Math.max(radius * 0.35, 0.15), position[2]);
+    const direction = getViewDirection(command.preset);
+    const distance = Math.max(radius * fitMargin * 2.3, 2.8);
+
+    camera.position.copy(target).add(direction.multiplyScalar(distance));
+    camera.up.copy(command.preset === "top" ? new Vector3(0, 0, -1) : command.preset === "bottom" ? new Vector3(0, 0, 1) : new Vector3(0, 1, 0));
+    camera.lookAt(target);
+    camera.updateProjectionMatrix();
+
+    controlsRef.current?.target.copy(target);
+    controlsRef.current?.update();
+  }, [camera, command.preset, command.sequence, controlsRef, fitMargin, position, radius]);
+
+  return null;
+}
+
+function BoundsHelper({ target }: { target: Object3D }) {
+  const helper = useMemo(() => new BoxHelper(target, "#8fd06c"), [target]);
+
+  useFrame(() => {
+    helper.update();
+  });
+
+  useEffect(() => {
+    return () => {
+      helper.dispose();
+    };
+  }, [helper]);
+
+  return <primitive object={helper} />;
 }
 
 function GroundPlane({ settings }: { settings: TemplateSettings }) {
@@ -369,7 +476,7 @@ function LoadingModel() {
   );
 }
 
-function MissingModel() {
+function MissingModel({ message }: { message: string }) {
   return (
     <group>
       <mesh castShadow receiveShadow position={[0, 0.55, 0]}>
@@ -377,7 +484,7 @@ function MissingModel() {
         <meshStandardMaterial color="#ff9f43" wireframe />
       </mesh>
       <Html center position={[0, 1.4, 0]} className="scene-label">
-        GLB not found
+        {message ? "GLB load error" : "GLB not found"}
       </Html>
     </group>
   );
@@ -443,6 +550,74 @@ function getModelOffset(scene: Object3D, autoCenter: boolean, groundAlign: boole
     groundAlign ? -box.min.y : autoCenter ? -center.y : 0,
     autoCenter ? -center.z : 0,
   ];
+}
+
+function buildModelReport(scene: Object3D, animations: number, source: string): ModelReport {
+  const materials = new Set<string>();
+  let meshes = 0;
+  let vertices = 0;
+  let triangles = 0;
+
+  scene.traverse((object) => {
+    const mesh = object as Mesh;
+    if (!mesh.isMesh || !mesh.geometry) {
+      return;
+    }
+
+    meshes += 1;
+    const geometry = mesh.geometry;
+    const positionAttribute = geometry.getAttribute("position");
+    const vertexCount = positionAttribute?.count ?? 0;
+    vertices += vertexCount;
+    triangles += geometry.index ? Math.floor(geometry.index.count / 3) : Math.floor(vertexCount / 3);
+
+    const meshMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    meshMaterials.forEach((material) => {
+      if (material) {
+        materials.add(material.uuid);
+      }
+    });
+  });
+
+  const box = new Box3().setFromObject(scene);
+  const size = box.isEmpty() ? new Vector3() : box.getSize(new Vector3());
+  const center = box.isEmpty() ? new Vector3() : box.getCenter(new Vector3());
+  const radius = box.isEmpty() ? 1 : Math.max(size.length() / 2, 0.1);
+
+  return {
+    source,
+    meshes,
+    materials: materials.size,
+    vertices,
+    triangles,
+    animations,
+    dimensions: [size.x, size.y, size.z],
+    center: [center.x, center.y, center.z],
+    radius,
+  };
+}
+
+function withRevision(source: string, revision: number) {
+  if (source.startsWith("blob:")) {
+    return source;
+  }
+
+  const separator = source.includes("?") ? "&" : "?";
+  return `${source}${separator}r=${revision}`;
+}
+
+function getViewDirection(preset: CameraView) {
+  const directions: Record<CameraView, Vector3> = {
+    isometric: new Vector3(1, 0.75, 1),
+    front: new Vector3(0, 0, 1),
+    back: new Vector3(0, 0, -1),
+    left: new Vector3(-1, 0, 0),
+    right: new Vector3(1, 0, 0),
+    top: new Vector3(0, 1, 0),
+    bottom: new Vector3(0, -1, 0),
+  };
+
+  return directions[preset].normalize();
 }
 
 function readTransform(group: Group): Pick<TemplateSettings, "position" | "rotation" | "scale"> {
