@@ -15,8 +15,13 @@ import type {
 } from "./types";
 
 function App() {
-  const [settings, setSettings] = useState<TemplateSettings>(() => readStoredSettings());
-  const [modelLabel, setModelLabel] = useState(() => readStoredSettings().modelUrl);
+  const initialSettingsRef = useRef<TemplateSettings | null>(null);
+  if (!initialSettingsRef.current) {
+    initialSettingsRef.current = readStoredSettings();
+  }
+
+  const [settings, setSettings] = useState<TemplateSettings>(initialSettingsRef.current);
+  const [modelLabel, setModelLabel] = useState(initialSettingsRef.current.modelUrl);
   const [animations, setAnimations] = useState<string[]>([]);
   const [modelReport, setModelReport] = useState<ModelReport | null>(null);
   const [modelStatus, setModelStatus] = useState<ModelStatus>("loading");

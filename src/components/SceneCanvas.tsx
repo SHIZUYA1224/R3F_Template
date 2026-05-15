@@ -25,6 +25,7 @@ import {
   LoopOnce,
   LoopRepeat,
   Material,
+  Matrix4,
   Mesh,
   NoToneMapping,
   Object3D,
@@ -68,6 +69,7 @@ interface LoadedModelProps {
   settings: TemplateSettings;
   sourceUrl: string;
   sourceLabel: string;
+  fitSignal: number;
   onAnimationsChange: (names: string[]) => void;
   onModelReport: (report: ModelReport) => void;
   onTransformCommit: (transform: Pick<TemplateSettings, "position" | "rotation" | "scale">) => void;
@@ -133,17 +135,15 @@ export function SceneCanvas({
           onAnimationsChange={onAnimationsChange}
           onModelError={onModelError}
         >
-          <Bounds fit={settings.fitOnLoad} observe clip margin={settings.fitMargin}>
-            <LoadedModel
-              settings={settings}
-              sourceUrl={sourceUrl}
-              sourceLabel={settings.modelUrl}
-              onAnimationsChange={onAnimationsChange}
-              onModelReport={onModelReport}
-              onTransformCommit={onTransformCommit}
-            />
-            <FitController signal={fitSignal} />
-          </Bounds>
+          <LoadedModel
+            settings={settings}
+            sourceUrl={sourceUrl}
+            sourceLabel={settings.modelUrl}
+            fitSignal={fitSignal}
+            onAnimationsChange={onAnimationsChange}
+            onModelReport={onModelReport}
+            onTransformCommit={onTransformCommit}
+          />
         </ModelLoadBoundary>
       </Suspense>
 
@@ -190,8 +190,10 @@ class ModelLoadBoundary extends Component<
   }
 
   componentDidCatch(error: Error) {
+    const message = formatModelLoadError(error.message, this.props.source);
+    this.setState({ hasError: true, message });
     this.props.onAnimationsChange([]);
-    this.props.onModelError(error.message);
+    this.props.onModelError(message);
   }
 
   componentDidUpdate(previousProps: { source: string }) {
@@ -213,6 +215,7 @@ function LoadedModel({
   settings,
   sourceUrl,
   sourceLabel,
+  fitSignal,
   onAnimationsChange,
   onModelReport,
   onTransformCommit,
@@ -309,11 +312,14 @@ function LoadedModel({
 
   return (
     <>
-      <group ref={setTargetRef} position={settings.position} rotation={rotation} scale={scale}>
-        <group position={offset}>
-          <primitive object={scene} />
+      <Bounds fit={settings.fitOnLoad} observe clip margin={settings.fitMargin}>
+        <group ref={setTargetRef} position={settings.position} rotation={rotation} scale={scale}>
+          <group position={offset}>
+            <primitive object={scene} />
+          </group>
         </group>
-      </group>
+        <FitController signal={fitSignal} />
+      </Bounds>
       {settings.showTransformGizmo && target ? (
         <TransformControls
           object={target}
@@ -538,7 +544,7 @@ function applyMaterialSettings(material: Material, settings: TemplateSettings) {
 }
 
 function getModelOffset(scene: Object3D, autoCenter: boolean, groundAlign: boolean): Vec3 {
-  const box = new Box3().setFromObject(scene);
+  const box = getLocalBox(scene);
 
   if (box.isEmpty()) {
     return [0, 0, 0];
@@ -579,7 +585,7 @@ function buildModelReport(scene: Object3D, animations: number, source: string): 
     });
   });
 
-  const box = new Box3().setFromObject(scene);
+  const box = getLocalBox(scene);
   const size = box.isEmpty() ? new Vector3() : box.getSize(new Vector3());
   const center = box.isEmpty() ? new Vector3() : box.getCenter(new Vector3());
   const radius = box.isEmpty() ? 1 : Math.max(size.length() / 2, 0.1);
@@ -597,6 +603,18 @@ function buildModelReport(scene: Object3D, animations: number, source: string): 
   };
 }
 
+function getLocalBox(scene: Object3D) {
+  scene.updateWorldMatrix(true, true);
+  const box = new Box3().setFromObject(scene);
+
+  if (!scene.parent || box.isEmpty()) {
+    return box;
+  }
+
+  scene.parent.updateWorldMatrix(true, false);
+  return box.applyMatrix4(new Matrix4().copy(scene.parent.matrixWorld).invert());
+}
+
 function withRevision(source: string, revision: number) {
   if (source.startsWith("blob:")) {
     return source;
@@ -604,6 +622,16 @@ function withRevision(source: string, revision: number) {
 
   const separator = source.includes("?") ? "&" : "?";
   return `${source}${separator}r=${revision}`;
+}
+
+function formatModelLoadError(message: string, source: string) {
+  const cleanSource = source.replace(/[?&]r=\d+$/, "");
+
+  if (message.includes("Unexpected token '<'") || message.includes("404") || message.includes("Could not load")) {
+    return `Could not load ${cleanSource}. Check the path or place the file under public/models.`;
+  }
+
+  return message || `Could not load ${cleanSource}.`;
 }
 
 function getViewDirection(preset: CameraView) {

@@ -109,7 +109,10 @@ export function ControlPanel({
         <Toggle
           label="DRACO decoder"
           checked={settings.useDraco}
-          onChange={(useDraco) => onPatchSettings({ useDraco })}
+          onChange={(useDraco) => {
+            onPatchSettings({ useDraco });
+            onReloadModel();
+          }}
         />
         <div className="button-row">
           <button type="button" onClick={onReloadModel}>
